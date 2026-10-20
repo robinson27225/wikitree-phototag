@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WikiTree PhotoTag</title>
+<style>
+:root{--bg:#faf8f5;--fg:#2b2622;--mute:#7a7167;--card:#fff;--line:#e6dfd6;--accent:#2f6f4f;--warn:#b4531a;--bad:#a4262c}
+@media (prefers-color-scheme:dark){:root{--bg:#1c1a18;--fg:#efe9e1;--mute:#a39a8f;--card:#26231f;--line:#3a352f;--accent:#6fbf94;--warn:#e59a62;--bad:#f08a8f}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
+header{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 20px;display:flex;gap:18px;align-items:center;flex-wrap:wrap;z-index:2}
+header h1{font-size:17px;margin:0}header .stat{color:var(--mute);font-size:13px}
+main{max-width:1000px;margin:0 auto;padding:16px 20px 60px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:16px}
+.faces{display:flex;flex-wrap:wrap;gap:4px;margin:8px 0}
+.face{position:relative;width:72px;height:72px;border-radius:6px;overflow:hidden;cursor:pointer;border:2px solid transparent}
+.face img{width:100%;height:100%;object-fit:cover;display:block}
+.face.sel{border-color:var(--bad)}.face.sel::after{content:"✕";position:absolute;top:0;right:3px;color:var(--bad);font-weight:700}
+.meta{color:var(--mute);font-size:13px}
+.face .open{position:absolute;bottom:2px;right:3px;font-size:13px;line-height:1;text-decoration:none;color:#fff;background:#0009;border-radius:3px;padding:0 3px}
+[hidden]{display:none!important}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
+button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--fg);padding:5px 10px;border-radius:6px;cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.sug{border-color:var(--accent)}button.sug.weak{border-style:dashed;border-color:var(--warn);color:var(--warn)}button:disabled{opacity:.5;cursor:default}
+input[type=text]{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;min-width:260px;background:var(--bg);color:var(--fg)}
+.results{display:flex;flex-direction:column;gap:2px;margin-top:6px;width:100%}
+.results button{text-align:left}.living{color:var(--warn)}.dead{color:var(--accent)}
+.pill{font-size:12px;padding:1px 7px;border-radius:99px;border:1px solid var(--line);color:var(--mute)}
+nav button.on{background:var(--fg);color:var(--bg)}
+</style></head><body>
+<header><h1>WikiTree PhotoTag</h1>
+<nav><button id="t-label" class="on">Name faces</button> <button id="t-people">Named people</button> <button id="t-export">Export preview</button></nav>
+<span class="stat" id="stat"></span></header>
+<main id="main"></main>
+<script>
+const $=s=>document.querySelector(s), api=(p,o)=>fetch('/api/'+p,o).then(r=>r.json());
+const post=(p,b)=>api(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let tab='label',order=(()=>{try{return localStorage.getItem('order')||'size'}catch(e){return 'size'}})();
+async function stats(){const s=await api('state');
+ $('#stat').textContent=`${s.photos} photos (${s.duplicates} duplicates skipped) · ${s.faces} faces · ${s.named} named (${s.people_named} people) · ${s.set_aside} set aside · ${s.unnamed} to go${s.active_minutes?` · ${s.active_minutes} min naming`:''}`}
+function personBtn(p){return `<span class="${p.deceased?'dead':'living'}">${esc(p.label)}${p.deceased?'':' — treated as living'}</span>`}
+async function renderLabel(){
+ const {clusters,total}=await api('clusters?limit=10&order='+order);
+ const m=$('#main');
+ if(!clusters.length){m.innerHTML='<p>No unnamed groups left. Try the Export preview tab.</p>';return}
+ m.innerHTML=`<p class="meta">${total} groups of similar faces still unnamed — <select id="order"><option value="size">biggest first</option><option value="older">older / probably deceased first</option></select>. Name a group once and every face in it is tagged. Click a face to mark it as <em>not this person</em>, then “Split off”.</p>`;
+ const sel0=$('#order');sel0.value=order;sel0.onchange=()=>{order=sel0.value;try{localStorage.setItem('order',order)}catch(e){}go()};
+ for(const c of clusters){
+  const el=document.createElement('div');el.className='card';el.dataset.id=c.cluster_id;
+  let sug='';
+  for(const h of (c.hints||[]))sug+=`<button class="sug${h.strong?'':' weak'}" data-p="${esc(h.person_id)}" data-dead="${h.person.deceased?1:0}" title="${h.strong?'':'Only a first name matched. The person in the photos may be a living relative who is not in the CC7.'}">${esc(h.person.label)} · ${esc(h.source)}${h.strong?'':' (weak)'} · ${h.faces} faces${h.person.deceased?' · deceased':''}</button>`;
+  for(const s of c.suggestions)sug+=`<button class="sug" data-p="${esc(s.person_id)}" data-dead="${s.person.deceased?1:0}">${esc(s.person.label)} · ${(s.score*100).toFixed(0)}%${s.plausible?'':' · dates don’t fit'}${s.person.deceased?' · deceased':''}</button>`;
+  el.innerHTML=`<div class="meta">${c.size} faces in ${c.photos} photos${c.year?` · around ${c.year}`:''}</div>
+   <div class="faces">${c.faces.map(f=>`<div class="face" data-f="${f.id}" title="${esc(f.rel)}"><img src="/thumb/${f.id}.jpg"></div>`).join('')}</div>
+   <div class="row">${sug}</div>
+   <div class="row"><input type="text" placeholder="Search the CC7 by name or WikiTree id…"><button class="split" disabled>Split off selected</button><button class="aside-sel" disabled title="Faces of classmates, strangers, anyone who is not family. They are never matched again and their photos stay private.">Not family: selected</button><button class="aside-photo" disabled title="Everyone still unnamed in the photos of the selected faces, e.g. the rest of a school class">Set aside everyone else in these photos</button><button class="loc" title="Names them on this machine only. Photos with them are never exported.">Living / not on WikiTree</button><button class="aside-all" title="This whole group is not family">Not family: whole group</button><button class="ign">Not a face</button></div>
+   <div class="results"></div>`;
+  m.appendChild(el);
+  const sel=new Set(),splitBtn=el.querySelector('.split'),asideSel=el.querySelector('.aside-sel'),asidePhoto=el.querySelector('.aside-photo');
+  el.querySelectorAll('.face').forEach(f=>{
+   f.onclick=e=>{ if(e.shiftKey){const id=f.dataset.f;window.open(`/photo/${c.faces.find(x=>x.id==id).photo_id}.jpg?face=${id}`);return}
+    const id=+f.dataset.f;sel.has(id)?sel.delete(id):sel.add(id);f.classList.toggle('sel');splitBtn.disabled=!sel.size;asideSel.disabled=asidePhoto.disabled=!sel.size}});
+  splitBtn.onclick=async()=>{await post('eject',{face_ids:[...sel]});go()};
+  asideSel.onclick=async()=>{await post('label',{face_ids:[...sel],person_id:'!other'});go()};
+  asidePhoto.onclick=async()=>{if(!confirm('Set aside every face that is still unnamed in the photos of the selected faces? Name the family members in those photos first.'))return;
+   const r=await post('set-aside-photos',{face_ids:[...sel]});alert(`Set aside ${r.faces} faces in ${r.photos} photo(s).`);go()};
+  el.querySelector('.aside-all').onclick=async()=>{await post('label',{cluster_id:c.cluster_id,person_id:'!other'});go()};
+  el.querySelector('.ign').onclick=async()=>{await post('label',{cluster_id:c.cluster_id,person_id:'!ignore'});go()};
+  const label=async(pid,dead)=>{
+   if(dead&&!confirm(`Name these ${c.size} faces as a deceased person?\n\nPhotos where everyone is named and deceased become exportable. Make sure this really is them, not a living relative with the same first name.`))return;
+   const r=await post('label',{cluster_id:c.cluster_id,person_id:pid});if(r.error)alert(r.error);else go()};
+  el.querySelector('.loc').onclick=()=>{const n=el.querySelector('input').value.trim()||prompt('Name (kept on this computer only):');if(n)label('local:'+n)};
+  el.querySelectorAll('.sug').forEach(b=>b.onclick=()=>label(b.dataset.p,b.dataset.dead==='1'));
+  const inp=el.querySelector('input'),res=el.querySelector('.results');let t;
+  inp.oninput=()=>{clearTimeout(t);t=setTimeout(async()=>{const q=inp.value.trim();if(!q){res.innerHTML='';return}
+   const ps=await api('people?q='+encodeURIComponent(q));res.innerHTML='';
+   ps.forEach(p=>{const b=document.createElement('button');b.innerHTML=personBtn(p);b.onclick=()=>label(p.id,p.deceased);res.appendChild(b)})},150)};
+ }}
+async function renderExport(){const s=await api('export-preview');
+ $('#main').innerHTML=`<div class="card"><h3>If you exported now</h3>
+  <p><strong>${s.ready}</strong> photos of <strong>${s.ready_people}</strong> deceased relatives would be written to the export folder.</p>
+  <p><strong>${s.withheld}</strong> photos stay private: ${s.reasons.unnamed||0} still have unnamed faces, ${s.reasons.living||0} include someone treated as possibly living, ${s.reasons.other||0} include a face you set aside.</p>
+  <p class="meta">Run <code>phototag export</code> to write the folder. Nothing is uploaded; you upload to WikiTree yourself.</p></div>`}
+async function renderPeople(){const ps=await api('named');const m=$('#main');
+ m.innerHTML='<p class="meta">Everyone you have named so far. Click faces to select them, then move them to someone else or send them back. The ↗ link opens the photo with every tagged person boxed.</p>';
+ for(const p of ps){const el=document.createElement('div');el.className='card';
+  el.innerHTML=`<strong>${esc(p.label)}</strong> <span class="pill">${p.id==='!other'?'set aside · photos stay private':p.deceased?'deceased · exportable':'treated as living · stays private'}</span>
+   <div class="meta">${p.faces} faces in ${p.photos} photos</div>
+   <div class="row"><button class="unname-all">Whole person is wrong — send all back to unnamed</button>${p.faces>p.face_ids.length?`<button class="show-all">Show all ${p.faces} faces</button>`:''}</div>
+   <div class="faces"></div>
+   <div class="row selbar" hidden><span class="meta sel-count"></span><button class="unname-sel">Send selected back to unnamed</button>
+    <input type="text" class="mv" placeholder="Move selected to… (search the CC7, or type a living relative’s name)"><button class="mv-local" title="Names them on this computer only; photos with them are never exported">Use typed name (living / not on WikiTree)</button><button class="mv-aside">Not family</button></div>
+   <div class="results"></div>`;
+  const facesEl=el.querySelector('.faces'),bar=el.querySelector('.selbar'),res=el.querySelector('.results'),inp=el.querySelector('.mv');
+  const sel=new Set();
+  const refresh=()=>{bar.hidden=!sel.size;el.querySelector('.sel-count').textContent=`${sel.size} selected`};
+  const drawFaces=(list)=>{facesEl.innerHTML='';sel.clear();refresh();
+   for(const f of list){const d=document.createElement('div');d.className='face';d.dataset.f=f.id;
+    d.innerHTML=`<img src="/thumb/${f.id}.jpg"><a class="open" href="/photo/${f.photo_id}.jpg?face=${f.id}" target="_blank" title="Open the photo">↗</a>`;
+    d.onclick=e=>{if(e.target.closest('.open'))return;const id=+f.id;sel.has(id)?sel.delete(id):sel.add(id);d.classList.toggle('sel');refresh()};
+    facesEl.appendChild(d)}};
+  drawFaces(p.face_ids.map((id,i)=>({id,photo_id:p.photo_ids[i]})));
+  const sa=el.querySelector('.show-all');if(sa)sa.onclick=async()=>{drawFaces(await api('person-faces?person_id='+encodeURIComponent(p.id)));sa.remove()};
+  el.querySelector('.unname-all').onclick=async()=>{if(confirm(`Remove the name from all ${p.faces} faces of ${p.name||p.id}?`)){await post('unlabel',{person_id:p.id});go()}};
+  el.querySelector('.unname-sel').onclick=async()=>{await post('unlabel',{person_id:p.id,face_ids:[...sel]});go()};
+  const moveTo=async(to,dead)=>{
+   if(dead&&!confirm(`Move ${sel.size} face(s) to a deceased person? Photos where everyone is named and deceased become exportable.`))return;
+   const r=await post('relabel',{person_id:p.id,face_ids:[...sel],to_person_id:to});if(r.error)alert(r.error);else go()};
+  el.querySelector('.mv-aside').onclick=()=>moveTo('!other',false);
+  el.querySelector('.mv-local').onclick=()=>{const n=inp.value.trim()||prompt('Name (kept on this computer only):');if(n)moveTo('local:'+n,false)};
+  let t;inp.oninput=()=>{clearTimeout(t);t=setTimeout(async()=>{const q=inp.value.trim();if(!q){res.innerHTML='';return}
+   const found=await api('people?q='+encodeURIComponent(q));res.innerHTML='';
+   found.forEach(x=>{const b=document.createElement('button');b.innerHTML=personBtn(x);b.onclick=()=>moveTo(x.id,x.deceased);res.appendChild(b)})},150)};
+  m.appendChild(el)}
+ if(!ps.length)m.innerHTML+='<p>Nobody named yet.</p>'}
+const views={label:renderLabel,people:renderPeople,export:renderExport};
+function go(){stats();views[tab]()}
+function show(t){tab=t;for(const k in views)$('#t-'+k).classList.toggle('on',k===t);go()}
+for(const k in views)$('#t-'+k).onclick=()=>show(k);
+go();
+</script></body></html>
