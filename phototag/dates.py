@@ -10,6 +10,7 @@ exclude anyone, because a scanner timestamp or a wrong guess must not hide the r
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 
 from .cc7 import Roster
@@ -59,3 +60,42 @@ def fits(roster: Roster, person_id: str, window: tuple[int, int, str] | None) ->
     if p.death_year and p.death_year < lo - 1:
         return False
     return True
+
+
+# --- printed date stamps ("MAY 64", "JUN '72", "89 8 13") that labs put on prints ---------------------------------
+_MONTHS = "jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec"
+_MONTH_YEAR = re.compile(rf"(?<![a-z])(?:{_MONTHS})[a-z]*\.?\s*['’]?\s*(\d{{4}}|\d{{2}})(?!\d)", re.I)
+_YY_M_D = re.compile(r"^\W*['’]?(\d{2})\s+(\d{1,2})\s+(\d{1,2})\W*$")
+
+
+def _year(yy: str) -> int | None:
+    n = int(yy)
+    if len(yy) == 4:
+        return n if 1860 <= n <= 2026 else None
+    n = 1900 + n if n >= 40 else 2000 + n       # print stamps start in the 1940s
+    return n if 1940 <= n <= 2026 else None
+
+
+def year_from_stamp(text: str) -> int | None:
+    """A photo year from a short printed date stamp. Long texts (captions, documents) are ignored: a year in
+    prose is as likely to be a birth or a marriage as the date the picture was taken."""
+    text = " ".join((text or "").split())
+    if not text or len(text) > 24:
+        return None
+    m = _YY_M_D.match(text)
+    if m and 1 <= int(m.group(2)) <= 12 and 1 <= int(m.group(3)) <= 31:
+        return _year(m.group(1))
+    years = {_year(y) for y in _MONTH_YEAR.findall(text)} - {None}
+    return years.pop() if len(years) == 1 else None
+
+
+def apply_stamps(db: sqlite3.Connection) -> int:
+    """Give undated photos the year from a stamp Gemma read. Safe to run repeatedly."""
+    n = 0
+    for r in db.execute("SELECT id, text_hint FROM photos WHERE year IS NULL AND text_hint != '' AND text_hint IS NOT NULL").fetchall():
+        y = year_from_stamp(r["text_hint"])
+        if y:
+            db.execute("UPDATE photos SET year=?, year_src='stamp' WHERE id=?", (y, r["id"]))
+            n += 1
+    db.commit()
+    return n

@@ -8,7 +8,7 @@ from pathlib import Path
 from . import cluster as clustering
 from . import db as dbm
 from . import export as exporting
-from . import backs, models, scan as scanning, web
+from . import backs, dates, models, scan as scanning, web
 from .cc7 import DEFAULT_PRESUMED_DECEASED_BEFORE, Roster
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -73,9 +73,10 @@ def main(argv=None):
     elif a.cmd == "cluster":
         print(f"{clustering.cluster(db, a.threshold)} groups of faces")
     elif a.cmd == "read-text":
-        print(f"{backs.read_text(db, not a.all, a.limit, a.model)} scans had readable text")
+        print(f"{backs.read_text(db, not a.all, a.limit, a.model)} scans had readable text; {dates.apply_stamps(db)} got a year from a date stamp")
     elif a.cmd == "label":
         scanning.backfill_saturation(db, a.data)
+        dates.apply_stamps(db)   # years from print date stamps Gemma has read
         web.serve(db, roster, a.data, a.port, a.blur, ROOT / "models", a.clear_born_before)
     elif a.cmd == "seed":
         print(f"seeded {clustering.seed_from_filenames(db, roster)} faces from file names")

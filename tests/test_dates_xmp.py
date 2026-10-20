@@ -62,3 +62,26 @@ def test_sidecars_beside_originals_skip_existing_set_aside_and_auto(roster, tmp_
     assert export.write_sidecars(db, roster, write=True)["skipped_existing"] == 1  # never clobbers
     assert (tmp_path / "family.jpg.xmp").read_text() == "mine"
     assert export.write_sidecars(db, roster, write=True, force=True)["written"] == 1
+
+
+def test_date_stamps_become_years_but_prose_does_not():
+    assert dates.year_from_stamp("MAY 64") == 1964
+    assert dates.year_from_stamp("JUN '72") == 1972
+    assert dates.year_from_stamp("Dec. 1985") == 1985
+    assert dates.year_from_stamp("89 8 13") == 1989
+    assert dates.year_from_stamp("'05 11 02") == 2005
+    assert dates.year_from_stamp("Jeremiah Alan Sweeny Dec. 21, 1997 7 Lbs. 13 Oz.") is None   # prose: a birth, not a print date
+    assert dates.year_from_stamp("for Grandpa Carl William Robinson b. 11-13-1933") is None
+    assert dates.year_from_stamp("MAY 64 JUN 71") is None                                      # two different years: ambiguous
+    assert dates.year_from_stamp("") is None and dates.year_from_stamp("Costa Atlantica") is None
+
+
+def test_apply_stamps_only_fills_undated_photos(tmp_path):
+    db = dbm.connect(tmp_path)
+    a = db.execute("INSERT INTO photos(path,rel,text_hint) VALUES('a','a.jpg','MAY 64')").lastrowid
+    b = db.execute("INSERT INTO photos(path,rel,text_hint,year,year_src) VALUES('b','b.jpg','MAY 64',1950,'filename')").lastrowid
+    db.commit()
+    assert dates.apply_stamps(db) == 1
+    assert dates.apply_stamps(db) == 0
+    assert db.execute("SELECT year, year_src FROM photos WHERE id=?", (a,)).fetchone()[:] == (1964, "stamp")
+    assert db.execute("SELECT year FROM photos WHERE id=?", (b,)).fetchone()[0] == 1950           # a real date is never overwritten
