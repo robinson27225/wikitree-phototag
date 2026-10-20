@@ -1,6 +1,8 @@
+<img src="docs/branding/logo.png" alt="WikiTree PhotoTag logo" width="128" align="right">
+
 # WikiTree PhotoTag
 
-> Unofficial community tool. Not affiliated with or endorsed by WikiTree.
+> A community tool for WikiTree family historians.
 
 Tag the faces in a family photo album with their WikiTree ids, **entirely on your own computer**, then export only the photos of deceased relatives into one folder per WikiTree profile, ready to upload.
 

@@ -1,4 +1,4 @@
-"""WikiTree PhotoTag (unofficial): init -> models -> scan -> cluster -> label -> export."""
+"""WikiTree PhotoTag: init -> models -> scan -> cluster -> label -> export."""
 from __future__ import annotations
 
 import argparse

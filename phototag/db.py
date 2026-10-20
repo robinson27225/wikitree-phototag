@@ -29,8 +29,9 @@ CREATE INDEX IF NOT EXISTS photos_sha1 ON photos(sha1);
 
 def connect(data_dir: Path) -> sqlite3.Connection:
     data_dir.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(data_dir / "phototag.db", check_same_thread=False)
+    db = sqlite3.connect(data_dir / "phototag.db", check_same_thread=False, timeout=60)
     db.row_factory = sqlite3.Row
+    db.execute("PRAGMA journal_mode=WAL")   # the labeling UI and a background pass can write at the same time
     db.executescript(SCHEMA)
     have = {r["name"] for r in db.execute("PRAGMA table_info(faces)")}
     for col, typ in (("sat", "REAL"), ("labeled_at", "TEXT")):   # added after the first release
