@@ -7,6 +7,7 @@ import numpy as np
 from scipy.cluster.hierarchy import fcluster, linkage
 
 from .cc7 import Roster
+from . import dates
 from .db import blob_to_emb
 
 DEFAULT_THRESHOLD = 0.36  # mean cosine similarity inside a group; SFace's own same-person cut-off
@@ -45,13 +46,15 @@ def exemplars(db: sqlite3.Connection) -> dict[str, np.ndarray]:
     return {pid: np.stack(v) for pid, v in out.items()}
 
 
-def suggest(centroid: np.ndarray, ex: dict[str, np.ndarray], roster: Roster, year: int | None, k: int = 3):
-    """Rank named people by how closely they resemble `centroid`. People who could not have been alive in `year` sink."""
+def suggest(centroid: np.ndarray, ex: dict[str, np.ndarray], roster: Roster, windows: list, k: int = 3):
+    """Rank named people by how closely they resemble `centroid`. A person who could not have been alive
+    at the time of at least half the group's dated photos sinks."""
     scored = []
     for pid, mat in ex.items():
         top = np.sort(mat @ centroid)[-3:]
         s = float(top.mean())
-        ok = roster.plausible(pid, year)
+        dated = [w for w in windows if w]
+        ok = not dated or sum(dates.fits(roster, pid, w) for w in dated) >= len(dated) / 2
         scored.append({"person_id": pid, "score": s, "plausible": ok, "rank": s - (0.0 if ok else 1.0)})
     scored.sort(key=lambda d: -d["rank"])
     return scored[:k]
@@ -111,6 +114,7 @@ def older_first(db: sqlite3.Connection, roster: Roster) -> list[int]:
 
 def cluster_summaries(db: sqlite3.Connection, roster: Roster, offset: int = 0, limit: int = 20, order: str = "size"):
     ex = exemplars(db)
+    windows = dates.photo_windows(db, roster)
     if order == "older":
         ids = older_first(db, roster)[offset:offset + limit]
     else:
@@ -127,11 +131,11 @@ def cluster_summaries(db: sqlite3.Connection, roster: Roster, offset: int = 0, l
         cent /= np.linalg.norm(cent) or 1.0
         years = sorted(r["year"] for r in rows if r["year"])
         year = years[len(years) // 2] if years else None
-        suggestions = suggest(cent, ex, roster, year) if ex else []
+        suggestions = suggest(cent, ex, roster, [windows.get(r["photo_id"]) for r in rows]) if ex else []
         out_hints = hints_for(rows, roster, db)
         out.append({
             "cluster_id": cid, "size": len(rows), "photos": len({r["photo_id"] for r in rows}), "year": year,
-            "faces": [{"id": r["id"], "photo_id": r["photo_id"], "rel": r["rel"]} for r in rows[:48]],
+            "faces": [{"id": r["id"], "photo_id": r["photo_id"], "rel": r["rel"], "caption": (r["text_hint"] or "")[:160]} for r in rows[:48]],
             "suggestions": suggestions, "hints": out_hints})
     return out, total
 
@@ -148,3 +152,27 @@ def seed_from_filenames(db: sqlite3.Connection, roster: Roster) -> int:
             n += 1
     db.commit()
     return n
+
+
+def focus(db: sqlite3.Connection, roster: Roster, person_id: str, min_score: float = 0.35,
+          limit: int = 150, offset: int = 0) -> dict:
+    """Every still-unnamed face ranked by how much it resembles the faces already named `person_id`."""
+    ex = exemplars(db).get(person_id)
+    if ex is None:
+        return {"named": 0, "total": 0, "faces": []}
+    rows = db.execute(
+        "SELECT f.id, f.emb, f.cluster_id, p.id AS photo_id, p.rel, p.year FROM faces f JOIN photos p ON p.id=f.photo_id "
+        "WHERE f.person_id IS NULL AND p.dup_of IS NULL").fetchall()
+    if not rows:
+        return {"named": len(ex), "total": 0, "faces": []}
+    windows = dates.photo_windows(db, roster)
+    sims = np.stack([blob_to_emb(r["emb"]) for r in rows]) @ ex.T
+    k = min(3, sims.shape[1])
+    score = np.sort(sims, axis=1)[:, -k:].mean(axis=1)    # same measure as the group suggestions
+    order = [i for i in np.argsort(-score) if score[i] >= min_score]
+    page = order[offset:offset + limit]
+    return {"named": len(ex), "total": len(order), "faces": [
+        {"id": rows[i]["id"], "photo_id": rows[i]["photo_id"], "rel": rows[i]["rel"], "year": rows[i]["year"],
+         "cluster_id": rows[i]["cluster_id"], "score": float(score[i]),
+         "plausible": dates.fits(roster, person_id, windows.get(rows[i]["photo_id"])),
+         "window": windows.get(rows[i]["photo_id"])} for i in page]}

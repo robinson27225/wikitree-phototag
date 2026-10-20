@@ -36,6 +36,8 @@ def connect(data_dir: Path) -> sqlite3.Connection:
     for col, typ in (("sat", "REAL"), ("labeled_at", "TEXT")):   # added after the first release
         if col not in have:
             db.execute(f"ALTER TABLE faces ADD COLUMN {col} {typ}")
+    if "era" not in {r["name"] for r in db.execute("PRAGMA table_info(photos)")}:
+        db.execute("ALTER TABLE photos ADD COLUMN era INTEGER")   # decade a vision model guessed, e.g. 1950
     db.commit()
     return db
 

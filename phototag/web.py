@@ -177,7 +177,18 @@ def make_handler(db: sqlite3.Connection, roster: Roster, data_dir: Path, blur: b
                 rows = db.execute("SELECT id, photo_id FROM faces WHERE person_id=? ORDER BY score DESC", (q.get("person_id", ""),)).fetchall()
                 return self._json([{"id": r["id"], "photo_id": r["photo_id"]} for r in rows])
             if name == "people":
-                return self._json([person_json(p.id) for p in roster.search(q.get("q", ""))])
+                found = [person_json(p.id) for p in roster.search(q.get("q", ""))]
+                needle = " ".join(q.get("q", "").lower().split())   # living relatives named only on this machine
+                if needle:
+                    for r in db.execute("SELECT DISTINCT person_id FROM faces WHERE person_id LIKE 'local:%'"):
+                        if needle in r["person_id"][len(LOCAL):].lower():
+                            found.append(person_json(r["person_id"]))
+                return self._json(found)
+            if name == "focus":
+                res = clustering.focus(db, roster, q.get("person_id", ""), float(q.get("min", 0.35)),
+                                       int(q.get("limit", 150)), int(q.get("offset", 0)))
+                res["person"] = person_json(q.get("person_id", ""))
+                return self._json(res)
             if name == "export-preview":
                 ds = exporting.plan(db, roster)
                 withheld = [d for d in ds if not d.export]

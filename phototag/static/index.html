@@ -15,6 +15,8 @@ main{max-width:1000px;margin:0 auto;padding:16px 20px 60px}
 .face.sel{border-color:var(--bad)}.face.sel::after{content:"✕";position:absolute;top:0;right:3px;color:var(--bad);font-weight:700}
 .meta{color:var(--mute);font-size:13px}
 .face .open{position:absolute;bottom:2px;right:3px;font-size:13px;line-height:1;text-decoration:none;color:#fff;background:#0009;border-radius:3px;padding:0 3px}
+.face .cap{position:absolute;bottom:2px;left:3px;font-size:12px;line-height:1;color:#fff;background:#0009;border-radius:3px;padding:0 3px}
+.face .sc{position:absolute;top:2px;left:3px;font-size:11px;line-height:1;color:#fff;background:#0009;border-radius:3px;padding:1px 3px}
 [hidden]{display:none!important}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
 button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--fg);padding:5px 10px;border-radius:6px;cursor:pointer}
@@ -27,7 +29,7 @@ input[type=text]{font:inherit;padding:6px 8px;border:1px solid var(--line);borde
 nav button.on{background:var(--fg);color:var(--bg)}
 </style></head><body>
 <header><h1>WikiTree PhotoTag</h1>
-<nav><button id="t-label" class="on">Name faces</button> <button id="t-people">Named people</button> <button id="t-export">Export preview</button></nav>
+<nav><button id="t-label" class="on">Name faces</button> <button id="t-people">Named people</button> <button id="t-focus">Find a person</button> <button id="t-export">Export preview</button></nav>
 <span class="stat" id="stat"></span></header>
 <main id="main"></main>
 <script>
@@ -50,7 +52,7 @@ async function renderLabel(){
   for(const h of (c.hints||[]))sug+=`<button class="sug${h.strong?'':' weak'}" data-p="${esc(h.person_id)}" data-dead="${h.person.deceased?1:0}" title="${h.strong?'':'Only a first name matched. The person in the photos may be a living relative who is not in the CC7.'}">${esc(h.person.label)} · ${esc(h.source)}${h.strong?'':' (weak)'} · ${h.faces} faces${h.person.deceased?' · deceased':''}</button>`;
   for(const s of c.suggestions)sug+=`<button class="sug" data-p="${esc(s.person_id)}" data-dead="${s.person.deceased?1:0}">${esc(s.person.label)} · ${(s.score*100).toFixed(0)}%${s.plausible?'':' · dates don’t fit'}${s.person.deceased?' · deceased':''}</button>`;
   el.innerHTML=`<div class="meta">${c.size} faces in ${c.photos} photos${c.year?` · around ${c.year}`:''}</div>
-   <div class="faces">${c.faces.map(f=>`<div class="face" data-f="${f.id}" title="${esc(f.rel)}"><img src="/thumb/${f.id}.jpg"></div>`).join('')}</div>
+   <div class="faces">${c.faces.map(f=>`<div class="face" data-f="${f.id}" title="${esc(f.rel)}${f.caption?'\n\nWritten on the scan: '+esc(f.caption):''}"><img src="/thumb/${f.id}.jpg">${f.caption?'<span class="cap">✎</span>':''}</div>`).join('')}</div>
    <div class="row">${sug}</div>
    <div class="row"><input type="text" placeholder="Search the CC7 by name or WikiTree id…"><button class="split" disabled>Split off selected</button><button class="aside-sel" disabled title="Faces of classmates, strangers, anyone who is not family. They are never matched again and their photos stay private.">Not family: selected</button><button class="aside-photo" disabled title="Everyone still unnamed in the photos of the selected faces, e.g. the rest of a school class">Set aside everyone else in these photos</button><button class="loc" title="Names them on this machine only. Photos with them are never exported.">Living / not on WikiTree</button><button class="aside-all" title="This whole group is not family">Not family: whole group</button><button class="ign">Not a face</button></div>
    <div class="results"></div>`;
@@ -112,7 +114,39 @@ async function renderPeople(){const ps=await api('named');const m=$('#main');
    found.forEach(x=>{const b=document.createElement('button');b.innerHTML=personBtn(x);b.onclick=()=>moveTo(x.id,x.deceased);res.appendChild(b)})},150)};
   m.appendChild(el)}
  if(!ps.length)m.innerHTML+='<p>Nobody named yet.</p>'}
-const views={label:renderLabel,people:renderPeople,export:renderExport};
+let focusPerson=null,focusMin=0.4,focusHideBad=true;
+async function renderFocus(){const m=$('#main');
+ m.innerHTML=`<p class="meta">Pick someone and see every unnamed face the model thinks is them, best match first. Tick the right ones and accept them. The person needs a few faces named already (their matches are measured against those).</p>
+  <div class="card"><div class="row"><input type="text" id="fq" placeholder="Search the CC7 or your local names…" style="min-width:320px"></div><div class="results" id="fres"></div></div><div id="fbody"></div>`;
+ const inp=$('#fq'),res=$('#fres');let t;
+ inp.oninput=()=>{clearTimeout(t);t=setTimeout(async()=>{const q=inp.value.trim();if(!q){res.innerHTML='';return}
+  const ps=await api('people?q='+encodeURIComponent(q));res.innerHTML='';
+  ps.forEach(p=>{const b=document.createElement('button');b.innerHTML=personBtn(p);b.onclick=()=>{focusPerson=p;res.innerHTML='';inp.value='';loadFocus()};res.appendChild(b)})},150)};
+ if(focusPerson)loadFocus()}
+async function loadFocus(){const body=$('#fbody'),p=focusPerson;
+ const data=await api(`focus?person_id=${encodeURIComponent(p.id)}&min=${focusMin}&limit=400`);
+ if(!data.named){body.innerHTML=`<div class="card"><strong>${esc(p.label)}</strong><p>No faces are named as this person yet, so there is nothing to compare against. Name a group or two on the “Name faces” tab first, then come back.</p></div>`;return}
+ const shown=data.faces.filter(f=>!(focusHideBad&&!f.plausible));
+ body.innerHTML=`<div class="card"><strong>${esc(p.label)}</strong> <span class="pill">${p.deceased?'deceased · exportable':'treated as living · stays private'}</span>
+  <div class="meta">${data.named} faces already named · ${data.total} unnamed faces look ${Math.round(focusMin*100)}%+ similar${shown.length<data.faces.length?` · ${data.faces.length-shown.length} hidden (photo dated outside their lifetime)`:''}</div>
+  <div class="row"><label>Minimum match <input type="range" id="fmin" min="25" max="70" value="${Math.round(focusMin*100)}"> <span id="fminv">${Math.round(focusMin*100)}%</span></label>
+   <label><input type="checkbox" id="fbad" ${focusHideBad?'checked':''}> hide photos whose date can’t fit them (from file names, who else is in the photo, or a rough era guess)</label></div>
+  <div class="row"><button id="fall">Select all shown above <input type="number" id="fthr" value="60" min="25" max="95" style="width:56px">%</button><button id="fclear">Clear selection</button>
+   <button class="primary" id="faccept" disabled>Accept selected as ${esc(p.name||p.id)}</button><span class="meta" id="fcount"></span></div>
+  <div class="faces" id="fgrid"></div></div>`;
+ const sel=new Set(),grid=$('#fgrid'),acc=$('#faccept');
+ const upd=()=>{$('#fcount').textContent=sel.size?`${sel.size} selected`:'';acc.disabled=!sel.size};
+ for(const f of shown){const d=document.createElement('div');d.className='face';d.dataset.f=f.id;d.dataset.s=f.score;
+  d.innerHTML=`<img src="/thumb/${f.id}.jpg"><span class="sc">${Math.round(f.score*100)}%</span><a class="open" href="/photo/${f.photo_id}.jpg?face=${f.id}" target="_blank" title="${esc(f.rel)}${f.window?` — photo likely ${f.window[0]>0?f.window[0]:'before'}–${f.window[1]<2100?f.window[1]:'later'} (${f.window[2]})`:''}">↗</a>`;
+  d.onclick=e=>{if(e.target.closest('.open'))return;sel.has(f.id)?sel.delete(f.id):sel.add(f.id);d.classList.toggle('sel',sel.has(f.id));upd()};grid.appendChild(d)}
+ $('#fmin').oninput=e=>{$('#fminv').textContent=e.target.value+'%'};
+ $('#fmin').onchange=e=>{focusMin=e.target.value/100;loadFocus()};
+ $('#fbad').onchange=e=>{focusHideBad=e.target.checked;loadFocus()};
+ $('#fclear').onclick=()=>{sel.clear();grid.querySelectorAll('.sel').forEach(x=>x.classList.remove('sel'));upd()};
+ $('#fall').onclick=()=>{const thr=$('#fthr').value/100;grid.querySelectorAll('.face').forEach(d=>{if(+d.dataset.s>=thr){sel.add(+d.dataset.f);d.classList.add('sel')}});upd()};
+ acc.onclick=async()=>{if(p.deceased&&!confirm(`Name ${sel.size} faces as ${p.name||p.id} (deceased)? Photos where everyone is named and deceased become exportable.`))return;
+  const r=await post('label',{face_ids:[...sel],person_id:p.id});if(r.error)alert(r.error);else{stats();loadFocus()}}}
+const views={label:renderLabel,people:renderPeople,focus:renderFocus,export:renderExport};
 function go(){stats();views[tab]()}
 function show(t){tab=t;for(const k in views)$('#t-'+k).classList.toggle('on',k===t);go()}
 for(const k in views)$('#t-'+k).onclick=()=>show(k);

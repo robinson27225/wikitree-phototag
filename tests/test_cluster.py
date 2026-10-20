@@ -46,3 +46,27 @@ def test_older_first_puts_early_black_and_white_groups_ahead(roster, tmp_path):
     assert cluster.older_first(db, roster) == [2, 1]
     summaries, _ = cluster.cluster_summaries(db, roster, order="older")
     assert [c["cluster_id"] for c in summaries] == [2, 1]
+
+
+def test_focus_ranks_unnamed_faces_by_resemblance_to_a_named_person(roster, tmp_path):
+    rng = np.random.default_rng(3)
+    a, b = rng.normal(size=(2, 128))
+    db = dbm.connect(tmp_path)
+    def add(photo, who, base, year=None, person=None):
+        pid = db.execute("INSERT INTO photos(path,rel,width,height,year) VALUES(?,?,10,10,?)", (photo, photo, year)).lastrowid
+        v = base + rng.normal(scale=0.2, size=128)
+        db.execute("INSERT INTO faces(photo_id,x,y,w,h,score,emb,person_id) VALUES(?,0,0,.1,.1,.9,?,?)",
+                   (pid, dbm.emb_to_blob(v / np.linalg.norm(v)), person))
+    for i in range(4):
+        add(f"named{i}.jpg", None, a, person="Robinson-1")      # Robinson-1 (1901-1991): the person we focus on
+    for i in range(3):
+        add(f"likely{i}.jpg", None, a)
+    add("dated_after_death.jpg", None, a, year=2010)
+    for i in range(3):
+        add(f"other{i}.jpg", None, b)
+    db.commit()
+    res = cluster.focus(db, roster, "Robinson-1", min_score=0.5)
+    rels = [f["rel"] for f in res["faces"]]
+    assert res["named"] == 4 and set(rels) == {"likely0.jpg", "likely1.jpg", "likely2.jpg", "dated_after_death.jpg"}
+    assert [f["plausible"] for f in res["faces"] if f["rel"] == "dated_after_death.jpg"] == [False]
+    assert cluster.focus(db, roster, "Budd-1")["named"] == 0       # nobody named yet: nothing to compare to

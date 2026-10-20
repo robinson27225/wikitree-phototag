@@ -23,9 +23,11 @@ album ───┘  (open face models)                (local web page)        �
 * **Guesses never leave on their own.** Names from `seed` / `accept` are marked *auto*. `export` skips those photos unless you pass `--include-auto`, because a wrong guess could file a living child under a deceased relative's profile. (In testing, an album folder named for a grandfather mostly held photos of children, so folder names are hints, not facts.)
 * **Uses what the tree already knows.**
   * Album folders such as `0A2 Carl William Robinson Sr` and file names such as `CarlSr_Fran_Teresa 003.jpg` become hints (nearest relatives with that first name, `Sr`/`Jr` respected).
-  * A person cannot appear in a photo dated before they were born or after they died; candidates that do not fit are demoted.
-  * Gemma reads handwriting on the backs of prints and looks for relatives' full names in it.
-* **Non-destructive.** Originals are never modified. Exports are copies (TIFF/BMP are converted to JPEG) with an `.xmp` sidecar carrying standard face regions and the WikiTree ids as keywords.
+  * **Date windows.** Few scans carry a date, so each photo's possible dates come from a year in its file name or EXIF, from the people already named in it (nobody is in a photo before they were born or after they died), and from a rough decade that Gemma guesses (it is often 10–30 years off, so it only adds a loose window and never overrides the tree). Candidates that cannot fit are demoted, never hidden.
+  * **Writing on scans.** Gemma 3 reads captions and handwriting, and the tool looks for relatives' full names in the text. Most readable text in a typical album turns out to be documents (certificates, discharges, obituaries) rather than photo backs.
+  * **Find a person.** Pick anyone from the CC7 (or a living relative you named locally) and see every unnamed face the model thinks is them, best match first. Tick the right ones and accept.
+  * **Set aside** classmates and strangers once; they are never matched again and their photos stay private.
+* **Non-destructive.** Originals are never modified. Exports are copies (TIFF/BMP are converted to JPEG) with an `.xmp` sidecar carrying standard face regions, the people in the image, a caption and the WikiTree ids. `phototag xmp --write` can also tag your album itself with `<photo>.jpg.xmp` sidecars (dry run by default, never overwrites an existing sidecar).
 
 ## Use
 
@@ -37,14 +39,16 @@ python3 -m venv .venv && .venv/bin/pip install -e .
 .venv/bin/phototag models        # downloads the two open face models (~38 MB)
 .venv/bin/phototag scan          # finds faces, skips duplicate files
 .venv/bin/phototag read-text     # optional: Gemma reads captions on scans without faces
+.venv/bin/phototag read-text --all  # optional, slow (~2.5 s/photo): also captions + a rough era for photos with faces
 .venv/bin/phototag seed          # optional: a one-face photo named "Alice Hester Harrison 001.jpg" names that face
 .venv/bin/phototag cluster
 .venv/bin/phototag label         # opens http://127.0.0.1:8765 : name each group once
 .venv/bin/phototag label --blur  # same, but every face except named deceased people is pixelated (safe to screenshot)
 .venv/bin/phototag export        # writes ./out/<WikiTree-Id>/… and captions.csv
+.venv/bin/phototag xmp           # optional: dry run of tagging the album itself; add --write to create the sidecars
 ```
 
-The CC7 csv comes from WikiTree's CC7 tool. It has no "living" flag, so `phototag init` reports how many people it will treat as deceased. Change the cut-off with `--presumed-deceased-before`.
+`init` keeps its own copy of the CC7 in `data/` (git-ignored). The CC7 csv comes from WikiTree's CC7 tool. It has no "living" flag, so `phototag init` reports how many people it will treat as deceased. Change the cut-off with `--presumed-deceased-before`.
 
 Uploading to WikiTree stays manual: open the profile, add the photo, paste the caption from `captions.csv`.
 

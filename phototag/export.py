@@ -11,7 +11,7 @@ from pathlib import Path
 from PIL import Image, ImageOps
 
 from .cc7 import Roster
-from .db import IGNORE, OTHER
+from .db import IGNORE, LOCAL, OTHER
 from .xmp import build_xmp
 
 WEB_FORMATS = {".jpg", ".jpeg", ".png", ".gif"}  # WikiTree accepts these; anything else is converted to JPEG
@@ -101,7 +101,8 @@ def export(db: sqlite3.Connection, roster: Roster, out: Path, report_dir: Path, 
                 img = ImageOps.exif_transpose(Image.open(src)).convert("RGB")
                 img.save(dest, "JPEG", quality=92)
             regions = [{"name": roster.get(r["person_id"]).name, **{k: r[k] for k in "xywh"}} for r in d.regions]
-            dest.with_suffix(".xmp").write_text(build_xmp(d.width, d.height, regions, d.people), encoding="utf-8")
+            dest.with_suffix(".xmp").write_text(
+                build_xmp(d.width, d.height, regions, d.people, caption_for(pid, d, roster)), encoding="utf-8")
             rows.append({"profile": pid, "file": f"{pid}/{name}", "caption": caption_for(pid, d, roster),
                          "people": " ".join(d.people), "year": d.year or "", "source": d.rel})
     with open(out / "captions.csv", "w", newline="", encoding="utf-8") as fh:
@@ -114,3 +115,38 @@ def export(db: sqlite3.Connection, roster: Roster, out: Path, report_dir: Path, 
         w.writerows(withheld)
     return {"exported_photos": sum(d.export for d in decisions), "profile_files": len(rows),
             "profiles": len({r["profile"] for r in rows}), "withheld": len(withheld)}
+
+
+def write_sidecars(db: sqlite3.Connection, roster: Roster, write: bool = False, force: bool = False,
+                   include_auto: bool = False) -> dict:
+    """Tag the album itself: `<photo>.jpg.xmp` beside every original that has named faces (digiKam / darktable /
+    most photo managers read these). Originals are not touched. Living and locally named people are included,
+    because these files stay on your machine; set-aside faces are not. Existing sidecars are never overwritten
+    unless `force`. Without `write` nothing is written (a dry run)."""
+    stats = {"photos": 0, "written": 0, "skipped_existing": 0}
+    for p in db.execute("SELECT * FROM photos WHERE dup_of IS NULL AND error IS NULL AND width IS NOT NULL").fetchall():
+        regions, subjects = [], []
+        for f in db.execute("SELECT * FROM faces WHERE photo_id=? AND person_id IS NOT NULL", (p["id"],)):
+            pid = f["person_id"]
+            if pid in (IGNORE, OTHER) or (f["label_src"] == "auto" and not include_auto):
+                continue
+            if pid.startswith(LOCAL):
+                name = pid[len(LOCAL):]
+            elif roster.get(pid):
+                name = roster.get(pid).name
+                subjects.append(pid)
+            else:
+                continue
+            regions.append({"name": name, **{k: f[k] for k in "xywh"}})
+        if not regions:
+            continue
+        stats["photos"] += 1
+        target = Path(p["path"] + ".xmp")
+        if target.exists() and not force:
+            stats["skipped_existing"] += 1
+            continue
+        if write:
+            names = [r["name"] for r in regions]
+            target.write_text(build_xmp(p["width"], p["height"], regions, sorted(set(subjects)), ", ".join(dict.fromkeys(names))), encoding="utf-8")
+            stats["written"] += 1
+    return stats

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 from pathlib import Path
 
 from . import cluster as clustering
@@ -34,6 +35,9 @@ def main(argv=None):
     p = sub.add_parser("accept", help="auto-name groups that clearly match people you already named")
     p.add_argument("--min", type=float, default=0.6, dest="min_score")
     p.add_argument("--hints", type=float, metavar="SHARE", help="also accept groups where one folder / full-name file name / caption hint covers this share of faces (e.g. 0.7)")
+    p = sub.add_parser("xmp", help="write <photo>.xmp sidecars (names + face regions) next to your originals; dry run unless --write")
+    p.add_argument("--write", action="store_true"); p.add_argument("--force", action="store_true", help="overwrite existing sidecars")
+    p.add_argument("--include-auto", action="store_true")
     p = sub.add_parser("export", help="write photos of deceased relatives, one folder per WikiTree profile")
     p.add_argument("--out", type=Path, default=ROOT / "out")
     p.add_argument("--include-auto", action="store_true",
@@ -43,9 +47,13 @@ def main(argv=None):
 
     cfg = dbm.load_config(a.data)
     if a.cmd == "init":
-        dbm.save_config(a.data, {"cc7": str(a.cc7.expanduser()), "photos": str(a.photos.expanduser()),
+        # keep our own copy: the app should not break because a Downloads folder got tidied
+        a.data.mkdir(parents=True, exist_ok=True)
+        local = a.data / "cc7.csv"
+        shutil.copyfile(a.cc7.expanduser(), local)
+        dbm.save_config(a.data, {"cc7": str(local), "photos": str(a.photos.expanduser()),
                                  "cutoff": a.presumed_deceased_before})
-        r = Roster.from_csv(a.cc7.expanduser(), a.presumed_deceased_before)
+        r = Roster.from_csv(local, a.presumed_deceased_before)
         dead = sum(r.is_deceased(pid) for pid in r.people)
         print(f"{len(r.people)} people in the CC7; {dead} treated as deceased, {len(r.people) - dead} withheld as possibly living")
         return
@@ -53,6 +61,9 @@ def main(argv=None):
         return models.download(ROOT / "models")
     if not cfg:
         raise SystemExit("Run `phototag init --cc7 FILE --photos DIR` first.")
+    if not Path(cfg["cc7"]).exists():
+        raise SystemExit(f"CC7 file not found: {cfg['cc7']}\nRe-export your CC7 from WikiTree, then run:\n"
+                         f"  phototag init --cc7 NEW_FILE.csv --photos {cfg['photos']}\n(your labels are safe in {a.data / 'phototag.db'})")
     roster = Roster.from_csv(cfg["cc7"], cfg["cutoff"])
     db = dbm.connect(a.data)
     if a.cmd == "scan":
@@ -81,6 +92,9 @@ def main(argv=None):
                 n += c["size"]
         db.commit()
         print(f"auto-named {n} faces")
+    elif a.cmd == "xmp":
+        r = exporting.write_sidecars(db, roster, a.write, a.force, a.include_auto)
+        print(r if a.write else f"dry run: {r['photos']} photos have named faces ({r['skipped_existing']} already have a sidecar). Add --write to create them.")
     elif a.cmd == "export":
         summary = exporting.export(db, roster, a.out, a.data, a.include_auto)
         print(summary)

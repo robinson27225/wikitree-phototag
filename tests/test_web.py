@@ -48,3 +48,11 @@ def test_only_the_ticked_faces_move_and_unknown_ids_are_refused(server):
     with pytest.raises(urllib.error.HTTPError):
         urllib.request.urlopen(req)
     assert db.execute("SELECT COUNT(*) FROM faces WHERE person_id='Robinson-1'").fetchone()[0] == 4
+
+
+def test_people_search_includes_locally_named_living_relatives(server):
+    db, base = server
+    db.execute("UPDATE faces SET person_id='local:Naomi Ruth Robinson' WHERE id=1")
+    db.commit()
+    found = json.load(urllib.request.urlopen(base + "/api/people?q=naomi%20ruth"))
+    assert [p["id"] for p in found] == ["local:Naomi Ruth Robinson"]
