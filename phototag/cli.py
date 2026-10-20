@@ -32,6 +32,8 @@ def main(argv=None):
     p.add_argument("--limit", type=int); p.add_argument("--model", default=backs.MODEL)
     p = sub.add_parser("label", help="open the local naming UI"); p.add_argument("--port", type=int, default=8765)
     p.add_argument("--blur", action="store_true", help="pixelate every face except deceased named people (safe for screenshots)")
+    p.add_argument("--clear-born-before", type=int, metavar="YEAR",
+                   help="with --blur: only people born before YEAR stay unblurred (e.g. 1950 keeps recently deceased relatives hidden)")
     p = sub.add_parser("accept", help="auto-name groups that clearly match people you already named")
     p.add_argument("--min", type=float, default=0.6, dest="min_score")
     p.add_argument("--hints", type=float, metavar="SHARE", help="also accept groups where one folder / full-name file name / caption hint covers this share of faces (e.g. 0.7)")
@@ -74,7 +76,7 @@ def main(argv=None):
         print(f"{backs.read_text(db, not a.all, a.limit, a.model)} scans had readable text")
     elif a.cmd == "label":
         scanning.backfill_saturation(db, a.data)
-        web.serve(db, roster, a.data, a.port, a.blur, ROOT / "models")
+        web.serve(db, roster, a.data, a.port, a.blur, ROOT / "models", a.clear_born_before)
     elif a.cmd == "seed":
         print(f"seeded {clustering.seed_from_filenames(db, roster)} faces from file names")
     elif a.cmd == "accept":

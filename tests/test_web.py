@@ -56,3 +56,22 @@ def test_people_search_includes_locally_named_living_relatives(server):
     db.commit()
     found = json.load(urllib.request.urlopen(base + "/api/people?q=naomi%20ruth"))
     assert [p["id"] for p in found] == ["local:Naomi Ruth Robinson"]
+
+
+def test_blur_mode_hides_living_names_and_cards(roster, tmp_path):
+    db = dbm.connect(tmp_path)
+    pid = db.execute("INSERT INTO photos(path,rel,width,height) VALUES('x','x.jpg',10,10)").lastrowid
+    for who in ("Robinson-1", "Living-1", "local:Dan Robinson"):
+        db.execute("INSERT INTO faces(photo_id,x,y,w,h,score,emb,person_id,label_src) VALUES(?,0,0,.1,.1,.9,?,?,'user')",
+                   (pid, dbm.emb_to_blob(np.ones(128)), who))
+    db.commit()
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), web.make_handler(db, roster, tmp_path, blur=True))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{srv.server_port}"
+        named = json.load(urllib.request.urlopen(base + "/api/named"))
+        assert [p["id"] for p in named] == ["Robinson-1"]                      # living and local-only cards are not listed
+        found = json.load(urllib.request.urlopen(base + "/api/people?q=azure%20rae"))
+        assert found and all("Azure" not in p["label"] for p in found)         # search results mask living names
+    finally:
+        srv.shutdown()

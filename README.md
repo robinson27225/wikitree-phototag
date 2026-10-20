@@ -45,7 +45,8 @@ python3 -m venv .venv && .venv/bin/pip install -e .
 .venv/bin/phototag seed          # optional: a one-face photo named "Alice Hester Harrison 001.jpg" names that face
 .venv/bin/phototag cluster
 .venv/bin/phototag label         # opens http://127.0.0.1:8765 : name each group once
-.venv/bin/phototag label --blur  # same, but every face except named deceased people is pixelated (safe to screenshot)
+.venv/bin/phototag label --blur  # same, but every face except named deceased people is pixelated and living names are hidden (safe to screenshot)
+.venv/bin/phototag label --blur --clear-born-before 1950   # ...and only people born before 1950 stay unblurred
 .venv/bin/phototag export        # writes ./out/<WikiTree-Id>/… and captions.csv
 .venv/bin/phototag xmp           # optional: dry run of tagging the album itself; add --write to create the sidecars
 ```
@@ -56,11 +57,13 @@ Uploading to WikiTree stays manual: open the profile, add the photo, paste the c
 
 ## Demo (faces of anyone who may be living are pixelated)
 
-| Name each group once | Everyone named so far | Nothing leaves unless it is safe |
-|---|---|---|
-| ![](docs/demo-1-name-faces-blurred.jpg) | ![](docs/demo-2-named-people.jpg) | ![](docs/demo-3-export-preview.jpg) |
+| Name each group once | Everyone named so far | Find a person | Nothing leaves unless it is safe |
+|---|---|---|---|
+| ![](docs/demo-1-name-faces-blurred.jpg) | ![](docs/demo-2-named-people.jpg) | ![](docs/demo-5-find-a-person.jpg) | ![](docs/demo-3-export-preview.jpg) |
 
-A 19-person family photo: one man is named (a deceased relative), every other face is pixelated, including faces the main detector missed (a second, more sensitive pass over-blurs).
+Screenshots are taken with `phototag label --blur --clear-born-before 1950`: every face is pixelated, and living relatives' names are hidden, except named deceased people born before 1950.
+
+A 19-person family photo: four older relatives are named, every other face is pixelated, including faces the main detector missed (a second, more sensitive pass over-blurs).
 
 ![](docs/demo-4-multi-person-photo.jpg)
 

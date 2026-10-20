@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import json
 import sqlite3
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -53,12 +54,20 @@ def active_minutes(db: sqlite3.Connection, idle_gap_min: int = 5) -> float:
     return round(sum(min((b - a).total_seconds(), idle_gap_min * 60) for a, b in zip(t, t[1:])) / 60 if len(t) > 1 else 0.0, 1)
 
 
-def make_handler(db: sqlite3.Connection, roster: Roster, data_dir: Path, blur: bool = False, models_dir: Path | None = None):
+def make_handler(db: sqlite3.Connection, roster: Roster, data_dir: Path, blur: bool = False, models_dir: Path | None = None,
+                 clear_born_before: int | None = None):
     """blur=True hides every face except those named as deceased people, so the UI is safe to screenshot."""
     def is_public(person_id: str | None) -> bool:
-        return bool(person_id) and person_id not in (IGNORE, OTHER) and roster.is_deceased(person_id)
+        if not person_id or person_id in (IGNORE, OTHER) or not roster.is_deceased(person_id):
+            return False
+        if clear_born_before:   # screenshots: only the older generation stays unblurred
+            p = roster.get(person_id)
+            return bool(p and p.birth_year and p.birth_year < clear_born_before)
+        return True
 
     def person_json(pid):
+        if blur and pid != OTHER and not is_public(pid):   # screenshots must not name living relatives either
+            return {"id": pid, "label": "Living relative (hidden)", "name": "Living relative", "deceased": False}
         p = roster.get(pid)
         if pid == OTHER:
             return {"id": pid, "label": "Not family / unknown (set aside)", "name": "Not family", "deceased": False}
@@ -67,6 +76,8 @@ def make_handler(db: sqlite3.Connection, roster: Roster, data_dir: Path, blur: b
         if not p:
             return {"id": pid, "label": pid, "deceased": False}
         return {"id": p.id, "label": p.label, "name": p.name, "deceased": roster.is_deceased(p.id)}
+
+    lock = threading.Lock()   # one sqlite connection is shared by all request threads
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -84,6 +95,14 @@ def make_handler(db: sqlite3.Connection, roster: Roster, data_dir: Path, blur: b
             self._send(json.dumps(obj).encode(), "application/json", status)
 
         def do_GET(self):
+            with lock:
+                self._get()
+
+        def do_POST(self):
+            with lock:
+                self._post()
+
+        def _get(self):
             from urllib.parse import urlparse, parse_qs
             u = urlparse(self.path)
             q = {k: v[0] for k, v in parse_qs(u.query).items()}
@@ -169,6 +188,8 @@ def make_handler(db: sqlite3.Connection, roster: Roster, data_dir: Path, blur: b
                 out = []
                 for r in db.execute("SELECT person_id, COUNT(*) n, COUNT(DISTINCT photo_id) photos FROM faces "
                                     "WHERE person_id IS NOT NULL AND person_id != '!ignore' GROUP BY person_id ORDER BY (person_id = '!other'), n DESC"):
+                    if blur and not is_public(r["person_id"]) and r["person_id"] != OTHER:
+                        continue
                     face_ids = [x[0] for x in db.execute("SELECT id FROM faces WHERE person_id=? ORDER BY score DESC LIMIT 14", (r["person_id"],))]
                     out.append({**person_json(r["person_id"]), "faces": r["n"], "photos": r["photos"], "face_ids": face_ids,
                                 "photo_ids": [x[0] for x in db.execute("SELECT photo_id FROM faces WHERE person_id=? ORDER BY score DESC LIMIT 14", (r["person_id"],))]})
@@ -200,7 +221,7 @@ def make_handler(db: sqlite3.Connection, roster: Roster, data_dir: Path, blur: b
                     "ready_people": len({p for d in ds if d.export for p in d.people})})
             self._json({"error": "unknown"}, 404)
 
-        def do_POST(self):
+        def _post(self):
             if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
                 return self._json({"error": "json only"}, 415)
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
@@ -260,8 +281,9 @@ def make_handler(db: sqlite3.Connection, roster: Roster, data_dir: Path, blur: b
     return Handler
 
 
-def serve(db, roster, data_dir: Path, port: int = 8765, blur: bool = False, models_dir: Path | None = None):
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(db, roster, data_dir, blur, models_dir))
+def serve(db, roster, data_dir: Path, port: int = 8765, blur: bool = False, models_dir: Path | None = None,
+          clear_born_before: int | None = None):
+    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(db, roster, data_dir, blur, models_dir, clear_born_before))
     print(f"Labeling UI: http://127.0.0.1:{port}   (Ctrl-C to stop)" + ("   [privacy blur on]" if blur else ""))
     try:
         server.serve_forever()
